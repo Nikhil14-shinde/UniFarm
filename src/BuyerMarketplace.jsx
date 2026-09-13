@@ -12,11 +12,10 @@ export default function BuyerMarketplace({ user }) {
   }, [])
 
   async function fetchProducts() {
-    // Fetches products and the associated farmer's details
     const { data } = await supabase
       .from('products')
       .select('*, profiles(full_name, location)')
-      .gt('quantity_available', 0) // Only show in-stock items
+      .gt('quantity_available', 0)
       .order('created_at', { ascending: false })
       
     if (data) setProducts(data)
@@ -30,26 +29,41 @@ export default function BuyerMarketplace({ user }) {
     const qty = quantities[product.id] || 1
     const totalPrice = product.price * qty
 
-    const { error } = await supabase.from('orders').insert([{
-      buyer_id: user.id,
-      product_id: product.id,
-      quantity: qty,
-      total_price: totalPrice,
-      status: 'pending'
-    }])
-    
-    if (error) {
-      alert('Error placing order: ' + error.message)
-      return
+    const options = {
+      key: "rzp_test_YOUR_KEY_HERE", 
+      amount: totalPrice * 100, 
+      currency: "INR",
+      name: "UniFarm",
+      description: `Payment for ${qty}kg of ${product.name}`,
+      theme: { color: "#16a34a" },
+      handler: async function (response) {
+        const { error } = await supabase.from('orders').insert([{
+          buyer_id: user.id,
+          product_id: product.id,
+          quantity: qty,
+          total_price: totalPrice,
+          status: 'pending'
+        }])
+        
+        if (error) {
+          alert('Error saving order: ' + error.message)
+          return
+        }
+
+        await supabase.from('products')
+          .update({ quantity_available: product.quantity_available - qty })
+          .eq('id', product.id)
+
+        alert(`Payment successful! Order placed. Payment ID: ${response.razorpay_payment_id}`)
+        fetchProducts()
+      }
     }
 
-    // Temporarily reduce stock in database (we will finalize this in the payment phase)
-    await supabase.from('products')
-      .update({ quantity_available: product.quantity_available - qty })
-      .eq('id', product.id)
-
-    alert(`Success! You ordered ${qty}kg of ${product.name}.`)
-    fetchProducts()
+    const rzp = new window.Razorpay(options)
+    rzp.on('payment.failed', function (response){
+      alert("Payment Failed. Please try again.")
+    })
+    rzp.open()
   }
 
   const filteredProducts = products.filter(p => {
